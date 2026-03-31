@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<!--
+https://www.milkywayidle.com/game_data/marketplace.json
+
+-->
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HA's Market Puller</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0a0a0f;
+      color: #e0e0e0;
+      padding: 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 { color: #00ff88; font-size: 22px; margin-bottom: 4px; }
+    .subtitle { color: #666; font-size: 12px; margin-bottom: 16px; }
+    .controls {
+      display: flex; gap: 12px; flex-wrap: wrap;
+      align-items: center; margin-bottom: 16px;
+    }
+    label { color: #888; font-size: 13px; }
+    select, input {
+      background: #1a1a2e; color: #e0e0e0;
+      border: 1px solid #333; border-radius: 6px;
+      padding: 6px 10px; font-size: 14px;
+    }
+    input[type="number"] { width: 70px; }
+    input[type="text"] { width: 160px; }
+    .status {
+      background: #1a1a2e; border: 1px solid #333;
+      border-radius: 8px; padding: 10px 16px;
+      margin-bottom: 16px; font-size: 13px; color: #888;
+    }
+    .status .count { color: #00ff88; font-weight: bold; }
+    table {
+      width: 100%; border-collapse: collapse;
+      background: #12121a; border-radius: 10px;
+      overflow: hidden;
+    }
+    thead th {
+      background: #1a1a2e; color: #888;
+      padding: 10px 8px; text-align: right;
+      font-size: 13px; cursor: pointer;
+      user-select: none; border-bottom: 1px solid #333;
+    }
+    thead th:first-child { text-align: left; }
+    thead th:hover { color: #00ff88; }
+    tbody td {
+      padding: 8px; text-align: right;
+      font-size: 14px; border-bottom: 1px solid #1a1a2e;
+    }
+    tbody td:first-child { text-align: left; font-weight: 600; }
+    tbody tr:hover { background: #1a1a3e; }
+    .positive { color: #00ff88; font-weight: 600; }
+    .negative { color: #ff4444; }
+    .neutral { color: #ffaa00; }
+    .loading { text-align: center; padding: 40px; color: #666; }
+    a { color: #00ff88; }
+
+    /* How it works */
+    .how-it-works {
+      background: #1a1a2e; border: 1px solid #333;
+      border-radius: 8px; padding: 16px;
+      margin-bottom: 16px; font-size: 13px;
+      line-height: 1.6; color: #888;
+    }
+    .how-it-works h3 { color: #00ff88; margin-bottom: 8px; font-size: 14px; }
+    .how-it-works code {
+      background: #0a0a0f; padding: 2px 6px;
+      border-radius: 4px; font-size: 12px; color: #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+
+<h1>HA's Market Puller</h1>
+<p class="subtitle">
+  A simple profit calculator for MilkyWay Idle. Pulls live market prices and shows gold/hr for every recipe.
+  <br>Built as a learning example &mdash; view source to see how it works!
+</p>
+
+<div class="how-it-works">
+  <h3>How This Works</h3>
+  <p>
+    This page fetches two things on load:
+    <strong style="color:#e0e0e0">market prices</strong> from the game's public API, and
+    <strong style="color:#e0e0e0">recipe data</strong> from MWTrader's API.
+  </p>
+  <p style="margin-top:6px">
+    For each recipe: <code>input cost</code> = buy materials at the <strong style="color:#ff4444">ask</strong> price,
+    <code>output value</code> = sell product at the <strong style="color:#00ff88">bid</strong> price minus 2% tax,
+    then <code>gold/hr</code> = profit per craft &times; crafts per hour (adjusted by your speed and efficiency from skill level).
+  </p>
+  <p style="margin-top:6px">
+    <strong style="color:#e0e0e0">Skill level</strong> affects two things:
+    <code>efficiency</code> gives +1% bonus output per level above the recipe requirement, and
+    your equipment speed bonuses apply on top. Try changing it to see gold/hr shift!
+  </p>
+</div>
+
+<div class="controls">
+  <label>
+    Skill:
+    <select id="skillFilter">
+      <option value="all">All Skills</option>
+    </select>
+  </label>
+  <label>
+    Skill Level:
+    <input type="number" id="skillLevel" value="1" min="1" max="200">
+  </label>
+  <label>
+    Search:
+    <input type="text" id="search" placeholder="recipe name...">
+  </label>
+</div>
+
+<div class="status" id="status">Loading market data...</div>
+
+<table>
+  <thead>
+    <tr>
+      <th data-sort="name">Recipe</th>
+      <th data-sort="skill">Skill</th>
+      <th data-sort="inputCost">Cost</th>
+      <th data-sort="outputValue">Sell</th>
+      <th data-sort="profitPercent">Profit %</th>
+      <th data-sort="effectiveTime">Time</th>
+      <th data-sort="goldPerHour">Gold/hr</th>
+    </tr>
+  </thead>
+  <tbody id="tableBody">
+    <tr><td colspan="7" class="loading">Fetching data...</td></tr>
+  </tbody>
+</table>
+
+<script>
+// ============================================================
+// HA's Market Puller — all the logic in one simple script
+// ============================================================
+
+// Where to fetch data from
+const MARKET_URL = 'https://www.milkywayidle.com/game_data/marketplace.json';
+const GAMEDATA_URL = 'https://mwtrader.bamsmith.com/api/gamedata';
+
+// State
+let recipes = [];
+let sortKey = 'goldPerHour';
+let sortAsc = false;
+
+// ---- STEP 1: Fetch both data sources in parallel ----
+async function loadData() {
+  try {
+    const [marketRes, gamedataRes] = await Promise.all([
+      fetch(MARKET_URL),
+      fetch(GAMEDATA_URL)
+    ]);
+
+    const marketJson = await marketRes.json();
+    const gamedata = await gamedataRes.json();
+
+    // Build a simple price lookup: itemHrid -> { ask, bid, volume }
+    const prices = {};
+    for (const [itemHrid, levels] of Object.entries(marketJson.marketData)) {
+      const base = levels['0']; // enhancement level 0 (unenhanced)
+      if (base) {
+        prices[itemHrid] = {
+          ask: base.a || 0,
+          bid: base.b || 0,
+          volume: base.v || 0
+        };
+      }
+    }
+
+    // Build recipes from game data
+    buildRecipes(gamedata, prices);
+
+    // Populate skill filter dropdown
+    const skills = [...new Set(recipes.map(r => r.skill))].sort();
+    const select = document.getElementById('skillFilter');
+    for (const skill of skills) {
+      const opt = document.createElement('option');
+      opt.value = skill;
+      opt.textContent = skill.charAt(0).toUpperCase() + skill.slice(1);
+      select.appendChild(opt);
+    }
+
+    document.getElementById('status').innerHTML =
+      `Loaded <span class="count">${Object.keys(prices).length}</span> items from marketplace, ` +
+      `<span class="count">${recipes.length}</span> recipes calculated.`;
+
+    renderTable();
+  } catch (err) {
+    document.getElementById('status').textContent = 'Error loading data: ' + err.message;
+    document.getElementById('tableBody').innerHTML =
+      '<tr><td colspan="7" class="loading">Failed to load. Check console for details.</td></tr>';
+    console.error(err);
+  }
+}
+
+// ---- STEP 2: Turn game data + prices into recipe rows ----
+function buildRecipes(gamedata, prices) {
+  recipes = [];
+  const actions = gamedata.actionDetailMap || {};
+
+  // Skills we care about (same set as the main dashboard)
+  const SKILL_TYPES = new Set([
+    '/action_types/milking', '/action_types/foraging', '/action_types/woodcutting',
+    '/action_types/cheesesmithing', '/action_types/crafting', '/action_types/tailoring',
+    '/action_types/cooking', '/action_types/brewing', '/action_types/enhancing'
+  ]);
+
+  for (const action of Object.values(actions)) {
+    const hasOutputs = action.outputItems?.length > 0;
+    const hasDrops = action.dropTable?.length > 0;
+    if (!hasOutputs && !hasDrops) continue;
+    if (!SKILL_TYPES.has(action.type)) continue;
+
+    const skill = action.type?.replace('/action_types/', '') || '';
+    const levelRequired = action.levelRequirement?.level || 1;
+
+    // Input cost: buy all materials at ask price
+    let inputCost = 0;
+    if (action.inputItems) {
+      for (const input of action.inputItems) {
+        inputCost += (prices[input.itemHrid]?.ask || 0) * input.count;
+      }
+    }
+    if (action.upgradeItemHrid) {
+      inputCost += prices[action.upgradeItemHrid]?.ask || 0;
+    }
+
+    // Output value: sell products at bid price
+    let outputValue = 0;
+    if (hasOutputs) {
+      for (const output of action.outputItems) {
+        outputValue += (prices[output.itemHrid]?.bid || 0) * output.count;
+      }
+    } else if (hasDrops) {
+      for (const drop of action.dropTable) {
+        const avgCount = (drop.minCount + drop.maxCount) / 2;
+        outputValue += (prices[drop.itemHrid]?.bid || 0) * avgCount * (drop.dropRate ?? 1);
+      }
+    }
+
+    if (inputCost <= 0 && outputValue <= 0) continue;
+
+    // Apply 2% marketplace tax
+    const outputAfterTax = Math.floor(outputValue * 0.98);
+
+    // Time calculation
+    const baseTime = (action.baseTimeCost || 1e9) / 1e9; // nanoseconds to seconds
+
+    recipes.push({
+      name: action.name || action.hrid,
+      skill,
+      inputCost,
+      outputValue,
+      outputAfterTax,
+      baseTime,
+      levelRequired,
+    });
+  }
+}
+
+// ---- STEP 3: Calculate gold/hr with player's skill level ----
+function calcGoldPerHour(recipe) {
+  const skillLevel = parseInt(document.getElementById('skillLevel').value) || 1;
+
+  // Speed: just base speed for this simple version (no equipment)
+  const totalSpeed = 0;
+  const effectiveTime = recipe.baseTime / (1 + totalSpeed);
+
+  // Efficiency: +1% per level above recipe requirement
+  const levelBonus = Math.max(0, skillLevel - recipe.levelRequired);
+  const efficiencyPercent = levelBonus; // just level advantage, no equipment
+  const outputMultiplier = 1 + Math.floor(efficiencyPercent / 100) + (efficiencyPercent % 100) / 100;
+
+  const profit = (recipe.outputAfterTax * outputMultiplier) - recipe.inputCost;
+  const actionsPerHour = 3600 / effectiveTime;
+  return Math.round(profit * actionsPerHour);
+}
+
+// ---- STEP 4: Render the table ----
+function renderTable() {
+  const skill = document.getElementById('skillFilter').value;
+  const search = document.getElementById('search').value.toLowerCase();
+
+  // Calculate gold/hr for each recipe with current skill level
+  const rows = recipes
+    .map(r => ({
+      ...r,
+      effectiveTime: r.baseTime / (1 + 0), // no equipment speed
+      goldPerHour: calcGoldPerHour(r),
+      profitPercent: r.inputCost > 0
+        ? ((r.outputAfterTax - r.inputCost) / r.inputCost * 100)
+        : (r.outputAfterTax > 0 ? 100 : 0),
+    }))
+    .filter(r => skill === 'all' || r.skill === skill)
+    .filter(r => !search || r.name.toLowerCase().includes(search))
+    .filter(r => r.inputCost > 0 || ['milking', 'foraging', 'woodcutting'].includes(r.skill))
+    .sort((a, b) => {
+      const va = a[sortKey], vb = b[sortKey];
+      if (typeof va === 'number' && typeof vb === 'number') {
+        return sortAsc ? va - vb : vb - va;
+      }
+      return sortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    });
+
+  const tbody = document.getElementById('tableBody');
+
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="loading">No recipes match your filters</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const cls = r.goldPerHour > 500000 ? 'positive'
+              : r.goldPerHour > 100000 ? 'positive'
+              : r.goldPerHour < 0 ? 'negative' : 'neutral';
+    return `<tr>
+      <td>${r.name}</td>
+      <td>${r.skill}</td>
+      <td>${r.inputCost.toLocaleString()}</td>
+      <td>${r.outputValue.toLocaleString()}</td>
+      <td>${r.profitPercent.toFixed(1)}%</td>
+      <td>${r.effectiveTime.toFixed(1)}s</td>
+      <td class="${cls}">${r.goldPerHour.toLocaleString()}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ---- STEP 5: Wire up controls ----
+document.getElementById('skillFilter').addEventListener('change', renderTable);
+document.getElementById('skillLevel').addEventListener('input', renderTable);
+document.getElementById('search').addEventListener('input', renderTable);
+
+// Column sorting
+document.querySelectorAll('thead th').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.sort;
+    if (key === sortKey) { sortAsc = !sortAsc; }
+    else { sortKey = key; sortAsc = false; }
+    renderTable();
+  });
+});
+
+// Go!
+loadData();
+</script>
+
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"a57dc59980494486bfaf14def0cd0944","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>

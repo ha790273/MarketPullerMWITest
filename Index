@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Price Checker</title>
+</head>
+<body>
+    <h1>Practice</h1>
+    <p>WIP pratices for MWI price checker!</p>
+
+    <button id="myButton">Check Price</button>
+
+    <p id="output">Nothing loaded...</p>
+
+
+    <script>
+        console.log("Hamsterss");
+
+        const itemPrice = 500;
+        const itemName ="Cheese";
+
+        const outputBox = document.getElementById("output");
+        const button = document.getElementById("myButton");
+
+    // This function runs when the button is clicked
+        function showPrice() {
+        outputBox.textContent = `${itemName} costs ${itemPrice} gold`;
+        }
+
+        // Tell the button: when clicked, run showPrice
+        button.addEventListener("click", showPrice);
+    </script>
+    
+</body>
+</html>
+
